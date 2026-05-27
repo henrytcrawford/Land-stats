@@ -2,14 +2,12 @@ import streamlit as st
 import ee
 import folium
 from streamlit_folium import st_folium
-import geemap.foliumap as gmap
 import geopandas as gpd
 import tempfile
 import os
 import math
 import zipfile
 import json
-import google.auth
 from google.oauth2 import service_account
 
 # ── Page config ───────────────────────────────────────────────────────────────
