@@ -4,7 +4,5 @@ geopandas
 pyogrio
 shapely
 folium
-geemap
-mapclassify
-google-auth
 streamlit-folium
+google-auth
