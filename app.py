@@ -237,29 +237,70 @@ if uploaded:
             "Ever Burned (MODIS)"
         ])
 
-        Map = gmap.Map(center=[lat, lon], zoom=15)
-        Map.add_basemap("SATELLITE")
+        # ── Map ───────────────────────────────────────────────────────────────
+        st.subheader("Map")
+        layer_choice = st.selectbox("Select layer to display", [
+            "Canopy Height (Meta)",
+            "Slope",
+            "Wetness (TWI)",
+            "Elevation",
+            "Land Cover (Dynamic World)",
+            "Built (ESA WorldCover)",
+            "Ever Burned (MODIS)"
+        ])
 
-        parcel_vis = {"color": "000000", "fillColor": "00000000", "width": 1}
+        # Build tile URL from EE
+        def get_tile_url(image, vis_params):
+            map_id = ee.data.getMapId({**vis_params, 'image': image})
+            return map_id['tile_fetcher'].url_format
+
+        m = folium.Map(location=[lat, lon], zoom_start=15,
+                       tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+                       attr='Google Satellite')
+
+        parcel_geojson = json.loads(gdf.to_json())
+        folium.GeoJson(
+            parcel_geojson,
+            style_function=lambda x: {
+                'fillColor': 'transparent',
+                'color': 'black',
+                'weight': 1
+            }
+        ).add_to(m)
 
         if layer_choice == "Canopy Height (Meta)":
-            Map.addLayer(ch, {"min":0,"max":30,"palette":["ffffff","a8dda8","2d6a2d"]}, "Canopy Height")
+            img = ch
+            vis = {"min":0,"max":30,"palette":["ffffff","a8dda8","2d6a2d"]}
         elif layer_choice == "Slope":
-            Map.addLayer(slope.clip(geometry), {"min":0,"max":45,"palette":["00ff00","ffff00","ff0000"]}, "Slope")
+            img = slope.clip(geometry)
+            vis = {"min":0,"max":45,"palette":["00ff00","ffff00","ff0000"]}
         elif layer_choice == "Wetness (TWI)":
-            Map.addLayer(twi.clip(geometry), {"min":0,"max":20,"palette":["ffffff","0066cc"]}, "TWI")
+            img = twi.clip(geometry)
+            vis = {"min":0,"max":20,"palette":["ffffff","0066cc"]}
         elif layer_choice == "Elevation":
-            Map.addLayer(dem, {"min":elev_min,"max":elev_max,"palette":["006633","E5FFCC","662A00","D8D8D8","F5F5F5"]}, "Elevation")
+            img = dem
+            vis = {"min":elev_min,"max":elev_max,"palette":["006633","E5FFCC","662A00","D8D8D8","F5F5F5"]}
         elif layer_choice == "Land Cover (Dynamic World)":
-            Map.addLayer(label.clip(geometry), {"min":0,"max":8,"palette":["419BDF","397D49","88B053","7A87C6","E49635","DFC35A","C4281B","A59B8F","B39FE1"]}, "Land Cover")
+            img = label.clip(geometry)
+            vis = {"min":0,"max":8,"palette":["419BDF","397D49","88B053","7A87C6","E49635","DFC35A","C4281B","A59B8F","B39FE1"]}
         elif layer_choice == "Built (ESA WorldCover)":
-            Map.addLayer(built_mask.selfMask(), {"palette":["C4281B"]}, "Built")
+            img = built_mask.selfMask()
+            vis = {"palette":["C4281B"]}
         elif layer_choice == "Ever Burned (MODIS)":
-            Map.addLayer(ever_burned, {"min":0,"max":1,"palette":["ffffff","ff4400"]}, "Ever Burned")
+            img = ever_burned
+            vis = {"min":0,"max":1,"palette":["ffffff","ff4400"]}
 
-        Map.addLayer(parcel.style(**parcel_vis), {}, "Parcel")
-        st_folium(Map, height=500, width=None)
+        tile_url = get_tile_url(img, vis)
+        folium.TileLayer(
+            tiles=tile_url,
+            attr='Google Earth Engine',
+            name=layer_choice,
+            overlay=True,
+            opacity=0.75
+        ).add_to(m)
 
+        folium.LayerControl().add_to(m)
+        st_folium(m, height=500, use_container_width=True)
         # ── Report ────────────────────────────────────────────────────────────
         st.subheader("Site Characterization Report")
         st.code(f"""
