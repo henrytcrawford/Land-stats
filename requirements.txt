@@ -1,12 +1,10 @@
-setuptools<82
-streamlit
 earthengine-api
-geemap==0.35.1
-folium
-streamlit-folium
+streamlit
 geopandas
 pyogrio
 shapely
+folium
+geemap
+mapclassify
 google-auth
-python-box
-xyzservices
+streamlit-folium
