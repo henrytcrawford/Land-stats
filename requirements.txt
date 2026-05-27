@@ -1,9 +1,11 @@
-earthengine-api
-geemap
 streamlit
+earthengine-api
+geemap==0.35.1
+folium
+streamlit-folium
 geopandas
 pyogrio
 shapely
-folium
-mapclassify
 google-auth
+python-box
+xyzservices
