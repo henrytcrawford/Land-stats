@@ -239,7 +239,7 @@ if uploaded:
         ])
 
         Map = gmap.Map(center=[lat, lon], zoom=15)
-        Map.add_basemap("SATELLITE")TE")
+        Map.add_basemap("SATELLITE")
 
         parcel_vis = {"color": "000000", "fillColor": "00000000", "width": 1}
 
