@@ -7,14 +7,15 @@ import os
 import math
 import zipfile
 import json
+import google.auth
 from google.oauth2 import service_account
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Parcel Site Characterization", layout="wide")
-st.title("Parcel Site Characterization Tool")
+st.title("🗺️ Parcel Site Characterization Tool")
 st.write("Upload a zipped shapefile to generate a site report and map.")
 
-# ── GEE Auth via Service Account ──────────────────────────────────────────────
+# ── GEE Auth ──────────────────────────────────────────────────────────────────
 @st.cache_resource
 def init_gee():
     key = json.loads(st.secrets["GEE_SERVICE_ACCOUNT"])
@@ -49,28 +50,28 @@ if uploaded:
 
         shp_path = os.path.join(tmpdir, shp_files[0])
 
-        # Load into GEE via geemap
         with st.spinner("Loading shapefile and running analysis — 30–60 seconds..."):
-            try:
-                parcel = geemap.shp_to_ee(shp_path)
-            except Exception as e:
-                st.error(f"Failed to load shapefile: {e}")
-                st.stop()
 
+            # Load shapefile with pyogrio
+            gdf = gpd.read_file(shp_path, engine="pyogrio")
+            if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+                gdf = gdf.to_crs(epsg=4326)
+            geojson = json.loads(gdf.to_json())
+            parcel   = ee.FeatureCollection(geojson)
             geometry = parcel.geometry()
 
             # ── Centroid ──────────────────────────────────────────────────────
-            coords = geometry.centroid(maxError=1).coordinates().getInfo()
+            coords   = geometry.centroid(maxError=1).coordinates().getInfo()
             lon, lat = coords[0], coords[1]
 
             # ── Elevation & Terrain ───────────────────────────────────────────
-            dem         = ee.Image("USGS/SRTMGL1_003").clipToCollection(parcel)
-            slope       = ee.Terrain.slope(dem)
-            aspect      = ee.Terrain.aspect(dem)
-            hillshade   = ee.Terrain.hillshade(dem, 315, 45)
-            slope_rad   = slope.multiply(math.pi / 180)
-            twi         = dem.focalMean(radius=3, kernelType="square") \
-                            .divide(slope_rad.tan().max(0.001)).log().rename("twi")
+            dem       = ee.Image("USGS/SRTMGL1_003").clipToCollection(parcel)
+            slope     = ee.Terrain.slope(dem)
+            aspect    = ee.Terrain.aspect(dem)
+            hillshade = ee.Terrain.hillshade(dem, 315, 45)
+            slope_rad = slope.multiply(math.pi / 180)
+            twi       = dem.focalMean(radius=3, kernelType="square") \
+                          .divide(slope_rad.tan().max(0.001)).log().rename("twi")
 
             elev_stats = dem.reduceRegion(
                 reducer=ee.Reducer.minMax().combine(ee.Reducer.mean(), sharedInputs=True),
@@ -100,7 +101,7 @@ if uploaded:
             twi_mean   = round(twi_stats.get("twi_mean", 0), 2)
             twi_max    = round(twi_stats.get("twi_max", 0), 2)
 
-            dirs = ["N","NE","E","SE","S","SW","W","NW","N"]
+            dirs       = ["N","NE","E","SE","S","SW","W","NW","N"]
             aspect_dir = dirs[round(aspect_mean / 45) % 8]
 
             slope_total = slope.reduceRegion(
@@ -109,7 +110,7 @@ if uploaded:
 
             def slope_pct(low, high):
                 if slope_total == 0: return 0.0
-                mask = slope.gt(low) if high is None else slope.gt(low).And(slope.lte(high))
+                mask  = slope.gt(low) if high is None else slope.gt(low).And(slope.lte(high))
                 count = mask.reduceRegion(ee.Reducer.sum(), geometry, 30, maxPixels=1e9).getInfo().get("slope", 0)
                 return round((count / slope_total) * 100, 1)
 
@@ -119,10 +120,10 @@ if uploaded:
             pct_steep      = slope_pct(30, 45)
             pct_very_steep = slope_pct(45, None)
 
-            # ── Canopy Height ─────────────────────────────────────────────────
+            # ── Canopy Height (Meta) ──────────────────────────────────────────
             band = "cover_code"
-            ch = ee.ImageCollection("projects/sat-io/open-datasets/facebook/meta-canopy-height") \
-                .filterBounds(geometry).mosaic().clip(geometry)
+            ch   = ee.ImageCollection("projects/sat-io/open-datasets/facebook/meta-canopy-height") \
+                     .filterBounds(geometry).mosaic().clip(geometry)
 
             ch_stats = ch.reduceRegion(
                 reducer=ee.Reducer.mean().combine(ee.Reducer.max(), sharedInputs=True)
@@ -130,13 +131,15 @@ if uploaded:
                 geometry=geometry, scale=10, maxPixels=1e9
             ).getInfo()
 
-            ch_total = ch.reduceRegion(ee.Reducer.count(), geometry, 10, maxPixels=1e9).getInfo().get(band, 0)
+            ch_total = ch.reduceRegion(
+                ee.Reducer.count(), geometry, 10, maxPixels=1e9
+            ).getInfo().get(band, 0)
 
             def ch_pct(low, high):
                 if ch_total == 0: return 0.0
                 if low == 0 and high == 0: mask = ch.eq(0)
-                elif high is None: mask = ch.gt(low)
-                else: mask = ch.gt(low).And(ch.lte(high))
+                elif high is None:         mask = ch.gt(low)
+                else:                      mask = ch.gt(low).And(ch.lte(high))
                 count = mask.reduceRegion(ee.Reducer.sum(), geometry, 10, maxPixels=1e9).getInfo().get(band, 0)
                 return round((count / ch_total) * 100, 1)
 
@@ -152,66 +155,79 @@ if uploaded:
             pct_vtall = ch_pct(30, None)
 
             # ── Dynamic World ─────────────────────────────────────────────────
-            label = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1") \
-                .filterBounds(geometry).filterDate("2024-05-01","2025-05-01") \
-                .median().select("label")
-
-            dw_total = label.reduceRegion(ee.Reducer.count(), geometry, 10, maxPixels=1e9).getInfo().get("label", 0)
+            label    = ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1") \
+                         .filterBounds(geometry).filterDate("2024-05-01","2025-05-01") \
+                         .median().select("label")
+            dw_total = label.reduceRegion(
+                ee.Reducer.count(), geometry, 10, maxPixels=1e9
+            ).getInfo().get("label", 0)
 
             def dw_pct(c):
                 if dw_total == 0: return 0.0
-                count = label.eq(c).reduceRegion(ee.Reducer.sum(), geometry, 10, maxPixels=1e9).getInfo().get("label", 0)
+                count = label.eq(c).reduceRegion(
+                    ee.Reducer.sum(), geometry, 10, maxPixels=1e9
+                ).getInfo().get("label", 0)
                 return round((count / dw_total) * 100, 1)
 
-            pct_trees = dw_pct(1)
-            pct_grass = dw_pct(2)
-            pct_shrub = dw_pct(5)
-            pct_water = dw_pct(0)
+            pct_trees   = dw_pct(1)
+            pct_grass   = dw_pct(2)
+            pct_shrub   = dw_pct(5)
+            pct_water   = dw_pct(0)
             pct_dw_bare = dw_pct(7)
 
-            # ── ESA Built ─────────────────────────────────────────────────────
-            wc        = ee.ImageCollection("ESA/WorldCover/v200").first().clip(geometry)
+            # ── ESA WorldCover (built) ─────────────────────────────────────────
+            wc         = ee.ImageCollection("ESA/WorldCover/v200").first().clip(geometry)
             built_mask = wc.eq(50)
-            wc_total  = wc.reduceRegion(ee.Reducer.count(), geometry, 10, maxPixels=1e9).getInfo().get("Map", 0)
-            wc_built  = built_mask.reduceRegion(ee.Reducer.sum(), geometry, 10, maxPixels=1e9).getInfo().get("Map", 0)
-            pct_built = round((wc_built / wc_total) * 100, 1) if wc_total > 0 else 0.0
+            wc_total   = wc.reduceRegion(
+                ee.Reducer.count(), geometry, 10, maxPixels=1e9
+            ).getInfo().get("Map", 0)
+            wc_built   = built_mask.reduceRegion(
+                ee.Reducer.sum(), geometry, 10, maxPixels=1e9
+            ).getInfo().get("Map", 0)
+            pct_built  = round((wc_built / wc_total) * 100, 1) if wc_total > 0 else 0.0
 
             # ── Soil ──────────────────────────────────────────────────────────
             def soil_mean(img, b):
-                return round(img.reduceRegion(ee.Reducer.mean(), geometry, 250, maxPixels=1e9).getInfo()[b], 1)
+                return round(img.reduceRegion(
+                    ee.Reducer.mean(), geometry, 250, maxPixels=1e9
+                ).getInfo()[b], 1)
 
-            clay_surf = soil_mean(ee.Image("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02").select("b0"), "b0")
+            clay_surf = soil_mean(ee.Image("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02").select("b0"),  "b0")
             clay_sub  = soil_mean(ee.Image("OpenLandMap/SOL/SOL_CLAY-WFRACTION_USDA-3A1A1A_M/v02").select("b30"), "b30")
-            sand_surf = soil_mean(ee.Image("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02").select("b0"), "b0")
+            sand_surf = soil_mean(ee.Image("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02").select("b0"),  "b0")
             sand_sub  = soil_mean(ee.Image("OpenLandMap/SOL/SOL_SAND-WFRACTION_USDA-3A1A1A_M/v02").select("b30"), "b30")
 
             # ── Climate ───────────────────────────────────────────────────────
-            wc_stats = ee.Image("WORLDCLIM/V1/BIO").reduceRegion(
+            wc_stats      = ee.Image("WORLDCLIM/V1/BIO").reduceRegion(
                 ee.Reducer.mean(), geometry, 1000, maxPixels=1e9
             ).getInfo()
-            mean_temp    = round((wc_stats.get("bio01", 0) or 0) / 10, 1)
+            mean_temp     = round((wc_stats.get("bio01", 0) or 0) / 10, 1)
             annual_precip = int(wc_stats.get("bio12", 0) or 0)
-            precip_seas  = round(wc_stats.get("bio15", 0) or 0, 1)
+            precip_seas   = round(wc_stats.get("bio15", 0) or 0, 1)
 
             # ── Wildfire ──────────────────────────────────────────────────────
             burned      = ee.ImageCollection("MODIS/061/MCD64A1") \
-                .filterBounds(geometry).filterDate("2000-01-01","2025-01-01").select("BurnDate")
+                            .filterBounds(geometry).filterDate("2000-01-01","2025-01-01") \
+                            .select("BurnDate")
             ever_burned = burned.max().gt(0).clip(geometry)
             pct_burned  = round(
-                (ever_burned.reduceRegion(ee.Reducer.mean(), geometry, 500, maxPixels=1e9)
-                .getInfo().get("BurnDate", 0) or 0) * 100, 1)
+                (ever_burned.reduceRegion(
+                    ee.Reducer.mean(), geometry, 500, maxPixels=1e9
+                ).getInfo().get("BurnDate", 0) or 0) * 100, 1)
 
             # ── Distance to water ─────────────────────────────────────────────
-            dist_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("occurrence").gt(10) \
-                .fastDistanceTransform().sqrt() \
-                .multiply(ee.Image.pixelArea().sqrt()).clip(geometry)
-            min_dist = round(
-                dist_water.reduceRegion(ee.Reducer.min(), geometry, 30, maxPixels=1e9)
-                .getInfo().get("occurrence", 0) or 0, 0)
+            dist_water = ee.Image("JRC/GSW1_4/GlobalSurfaceWater") \
+                           .select("occurrence").gt(10) \
+                           .fastDistanceTransform().sqrt() \
+                           .multiply(ee.Image.pixelArea().sqrt()).clip(geometry)
+            min_dist   = round(
+                dist_water.reduceRegion(
+                    ee.Reducer.min(), geometry, 30, maxPixels=1e9
+                ).getInfo().get("occurrence", 0) or 0, 0)
 
         # ── Map ───────────────────────────────────────────────────────────────
         st.subheader("Map")
-        layer_choice = st.selectbox("Select layer", [
+        layer_choice = st.selectbox("Select layer to display", [
             "Canopy Height (Meta)",
             "Slope",
             "Wetness (TWI)",
