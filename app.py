@@ -1,7 +1,8 @@
 import streamlit as st
 import ee
-import geemap.foliumap as geemap
-import geopandas as gpd
+import folium
+from streamlit_folium import st_folium
+import geemap.foliumap as gmapimport geopandas as gpd
 import tempfile
 import os
 import math
