@@ -238,8 +238,8 @@ if uploaded:
             "Ever Burned (MODIS)"
         ])
 
-        Map = geemap.Map(center=[lat, lon], zoom=15)
-        Map.add_basemap("SATELLITE")
+        Map = gmap.Map(center=[lat, lon], zoom=15)
+        Map.add_basemap("SATELLITE")TE")
 
         parcel_vis = {"color": "000000", "fillColor": "00000000", "width": 1}
 
@@ -259,7 +259,7 @@ if uploaded:
             Map.addLayer(ever_burned, {"min":0,"max":1,"palette":["ffffff","ff4400"]}, "Ever Burned")
 
         Map.addLayer(parcel.style(**parcel_vis), {}, "Parcel")
-        Map.to_streamlit(height=500)
+        st_folium(Map, height=500, width=None)
 
         # ── Report ────────────────────────────────────────────────────────────
         st.subheader("Site Characterization Report")
