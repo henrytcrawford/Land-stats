@@ -1,6 +1,8 @@
 earthengine-api
-geemap
 streamlit
 geopandas
 fiona
 shapely
+geemap
+folium
+mapclassify
