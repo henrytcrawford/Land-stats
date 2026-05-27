@@ -1,8 +1,9 @@
 earthengine-api
+geemap
 streamlit
 geopandas
-fiona
+pyogrio
 shapely
-geemap
 folium
 mapclassify
+google-auth
