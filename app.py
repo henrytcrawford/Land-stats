@@ -254,7 +254,9 @@ if uploaded:
         ])
 
         def get_tile_url(image, vis_params):
-            map_id = ee.data.getMapId({**vis_params, "image": image})
+            vis = {k: (str(v) if isinstance(v, (int, float)) else v)
+                   for k, v in vis_params.items()}
+            map_id = ee.data.getMapId({**vis, "image": image})
             return map_id["tile_fetcher"].url_format
 
         m = folium.Map(
