@@ -52,7 +52,7 @@ if uploaded:
 
         with st.spinner("Loading shapefile and running analysis — 30–60 seconds..."):
 
-            # Load shapefile with pyogrio
+            # ── Load shapefile ────────────────────────────────────────────────
             gdf = gpd.read_file(shp_path, engine="pyogrio")
             if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
                 gdf = gdf.to_crs(epsg=4326)
@@ -60,12 +60,14 @@ if uploaded:
             # Explode MultiPolygon to individual Polygons
             gdf = gdf.explode(index_parts=False).reset_index(drop=True)
 
-            # Convert each row to an EE Feature
+            # Convert to EE FeatureCollection via explicit coordinate extraction
             features = []
             for _, row in gdf.iterrows():
-                geojson_geom = row.geometry.__geo_interface__
-                ee_geom = ee.Geometry(geojson_geom)
-                features.append(ee.Feature(ee_geom))
+                geom = row.geometry
+                if geom.geom_type == 'Polygon':
+                    coords = [[[c[0], c[1]] for c in geom.exterior.coords]]
+                    ee_geom = ee.Geometry.Polygon(coords)
+                    features.append(ee.Feature(ee_geom))
 
             parcel   = ee.FeatureCollection(features)
             geometry = parcel.geometry()
@@ -121,7 +123,9 @@ if uploaded:
             def slope_pct(low, high):
                 if slope_total == 0: return 0.0
                 mask  = slope.gt(low) if high is None else slope.gt(low).And(slope.lte(high))
-                count = mask.reduceRegion(ee.Reducer.sum(), geometry, 30, maxPixels=1e9).getInfo().get("slope", 0)
+                count = mask.reduceRegion(
+                    ee.Reducer.sum(), geometry, 30, maxPixels=1e9
+                ).getInfo().get("slope", 0)
                 return round((count / slope_total) * 100, 1)
 
             pct_flat       = slope_pct(0, 5)
@@ -150,7 +154,9 @@ if uploaded:
                 if low == 0 and high == 0: mask = ch.eq(0)
                 elif high is None:         mask = ch.gt(low)
                 else:                      mask = ch.gt(low).And(ch.lte(high))
-                count = mask.reduceRegion(ee.Reducer.sum(), geometry, 10, maxPixels=1e9).getInfo().get(band, 0)
+                count = mask.reduceRegion(
+                    ee.Reducer.sum(), geometry, 10, maxPixels=1e9
+                ).getInfo().get(band, 0)
                 return round((count / ch_total) * 100, 1)
 
             ch_mean   = round(ch_stats.get(f"{band}_mean", 0), 1)
@@ -247,37 +253,27 @@ if uploaded:
             "Ever Burned (MODIS)"
         ])
 
-        # ── Map ───────────────────────────────────────────────────────────────
-        st.subheader("Map")
-        layer_choice = st.selectbox("Select layer to display", [
-            "Canopy Height (Meta)",
-            "Slope",
-            "Wetness (TWI)",
-            "Elevation",
-            "Land Cover (Dynamic World)",
-            "Built (ESA WorldCover)",
-            "Ever Burned (MODIS)"
-        ])
-
-        # Build tile URL from EE
         def get_tile_url(image, vis_params):
-            map_id = ee.data.getMapId({**vis_params, 'image': image})
-            return map_id['tile_fetcher'].url_format
+            map_id = ee.data.getMapId({**vis_params, "image": image})
+            return map_id["tile_fetcher"].url_format
 
-        m = folium.Map(location=[lat, lon], zoom_start=15,
-                       tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-                       attr='Google Satellite')
+        m = folium.Map(
+            location=[lat, lon], zoom_start=15,
+            tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+            attr="Google Satellite"
+        )
 
-        parcel_geojson = json.loads(gdf.to_json())
+        # Parcel outline
         folium.GeoJson(
-            parcel_geojson,
+            json.loads(gdf.to_json()),
             style_function=lambda x: {
-                'fillColor': 'transparent',
-                'color': 'black',
-                'weight': 1
+                "fillColor": "transparent",
+                "color": "black",
+                "weight": 1
             }
         ).add_to(m)
 
+        # Selected layer
         if layer_choice == "Canopy Height (Meta)":
             img = ch
             vis = {"min":0,"max":30,"palette":["ffffff","a8dda8","2d6a2d"]}
@@ -303,7 +299,7 @@ if uploaded:
         tile_url = get_tile_url(img, vis)
         folium.TileLayer(
             tiles=tile_url,
-            attr='Google Earth Engine',
+            attr="Google Earth Engine",
             name=layer_choice,
             overlay=True,
             opacity=0.75
@@ -311,6 +307,7 @@ if uploaded:
 
         folium.LayerControl().add_to(m)
         st_folium(m, height=500, use_container_width=True)
+
         # ── Report ────────────────────────────────────────────────────────────
         st.subheader("Site Characterization Report")
         st.code(f"""
@@ -327,8 +324,8 @@ if uploaded:
   Slope breakdown:
     Flat (0–5°):        {pct_flat}%
     Gentle (5–15°):     {pct_gentle}%
-    Moderate (15–30°):  {pct_moderate}%  ← erosion-prone
-    Steep (30–45°):     {pct_steep}%   ← landslide risk
+    Moderate (15–30°):  {pct_moderate}%  <- erosion-prone
+    Steep (30–45°):     {pct_steep}%   <- landslide risk
     Very steep (>45°):  {pct_very_steep}%
 
   Topographic Wetness Index:
@@ -340,12 +337,12 @@ if uploaded:
 
   Height classes:
     Bare (0 m):         {pct_bare}%
-    Low (0–5 m):        {pct_low}%   shrubs / regeneration
-    Mid (5–15 m):       {pct_mid}%   young / mid-successional
-    Tall (15–30 m):     {pct_tall}%   mature canopy
+    Low (0-5 m):        {pct_low}%   shrubs / regeneration
+    Mid (5-15 m):       {pct_mid}%   young / mid-successional
+    Tall (15-30 m):     {pct_tall}%   mature canopy
     Very tall (>30 m):  {pct_vtall}%   old growth / emergent
 
-🌿 LAND COVER  (Dynamic World 2024–25)
+🌿 LAND COVER  (Dynamic World 2024-25)
   Trees:   {pct_trees}%
   Grass:   {pct_grass}%
   Shrub:   {pct_shrub}%
@@ -367,7 +364,7 @@ if uploaded:
 💧 WATER PROXIMITY  (JRC Global Surface Water)
   Nearest permanent/seasonal water:  {int(min_dist)} m
 
-🔥 WILDFIRE  (MODIS 2000–2025, 500 m res)
+🔥 WILDFIRE  (MODIS 2000-2025, 500 m res)
   Ever burned:  {pct_burned}%
 
 ⚠️  VERIFY LOCALLY
@@ -378,6 +375,6 @@ if uploaded:
   Seismic:     earthquakescanada.nrcan.gc.ca
 
 {'='*52}
-All metrics are reference-level only — verify in field.
+All metrics are reference-level only - verify in field.
 {'='*52}
 """, language=None)
