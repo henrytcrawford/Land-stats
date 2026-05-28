@@ -6,4 +6,3 @@ shapely
 folium
 streamlit-folium
 google-auth
-fiona
