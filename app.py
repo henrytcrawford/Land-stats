@@ -18,7 +18,7 @@ st.write("Upload a zipped shapefile to generate a site report and map.")
 # ── GEE Auth ──────────────────────────────────────────────────────────────────
 @st.cache_resource
 def init_gee():
-    key = json.loads(st.secrets["GEE_SERVICE_ACCOUNT"])
+    key = json.loads(st.secrets["gee"]["service_account"])
     credentials = service_account.Credentials.from_service_account_info(
         key, scopes=["https://www.googleapis.com/auth/earthengine"]
     )
