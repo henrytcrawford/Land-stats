@@ -52,13 +52,23 @@ if uploaded:
 
         with st.spinner("Loading shapefile and running analysis — 30–60 seconds..."):
 
-            # Load shapefile with pyogrio
-            gdf = gpd.read_file(shp_path, engine="pyogrio")
-            if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
-                gdf = gdf.to_crs(epsg=4326)
-            geojson = json.loads(gdf.to_json())
-            parcel   = ee.FeatureCollection(geojson)
-            geometry = parcel.geometry()
+        # Load shapefile with pyogrio
+        gdf = gpd.read_file(shp_path, engine="pyogrio")
+        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+
+        # Explode MultiPolygon to individual Polygons
+        gdf = gdf.explode(index_parts=False).reset_index(drop=True)
+
+        # Convert each row to an EE Feature
+        features = []
+        for _, row in gdf.iterrows():
+            geojson_geom = row.geometry.__geo_interface__
+            ee_geom = ee.Geometry(geojson_geom)
+            features.append(ee.Feature(ee_geom))
+
+        parcel   = ee.FeatureCollection(features)
+        geometry = parcel.geometry()
 
             # ── Centroid ──────────────────────────────────────────────────────
             coords   = geometry.centroid(maxError=1).coordinates().getInfo()
